@@ -1,10 +1,9 @@
 """
-Options Market Making Tool — Heston Family Models
-===================================================
-Streamlit application for calibrating Heston, Bates, and Double Heston models
-to market data, and pricing vanilla, binary options, and variance swaps.
-
-Author: Quantitative Finance Project
+Heston Family — Options Market Making Tool
+============================================
+Two views:
+  - Trader View: Calibration, pricing, Greeks, vol surface (internal)
+  - Customer View: Clean bid-offer quote interface (client-facing)
 """
 
 import streamlit as st
@@ -12,328 +11,384 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import io
-import sys
-import os
+import sys, os
 
-# Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from models import (
-    price_european, price_binary_call, price_binary_put,
-    variance_swap_strike, variance_swap_vol_strike
-)
-from calibration import (
-    calibrate, implied_vol, bs_price, bs_vega,
-    PARAM_BOUNDS, PARAM_NAMES, DEFAULT_PARAMS
-)
+from models import (price_european, price_binary_call, price_binary_put,
+                    variance_swap_strike, variance_swap_vol_strike)
+from calibration import (calibrate, implied_vol, bs_price, bs_vega,
+                         PARAM_BOUNDS, PARAM_NAMES, DEFAULT_PARAMS)
 
 # =============================================================================
-# Page configuration
+# Page config
 # =============================================================================
+st.set_page_config(page_title="Heston Market Making", page_icon="📊",
+                   layout="wide", initial_sidebar_state="expanded")
 
-st.set_page_config(
-    page_title="Heston Options Pricer",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# =============================================================================
-# Custom CSS
-# =============================================================================
-
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;500;700&display=swap');
-
-    /* Main container */
-    .main .block-container {
-        padding-top: 2rem;
-        max-width: 1400px;
-    }
-
-    /* Headers */
-    h1, h2, h3 { font-family: 'DM Sans', sans-serif !important; }
-    h1 { font-weight: 700 !important; letter-spacing: -0.02em; }
-
-    /* Metric cards */
+st.markdown("""<style>
+    .main .block-container { padding-top: 1.5rem; max-width: 1400px; }
     div[data-testid="stMetric"] {
         background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        border: 1px solid rgba(99, 102, 241, 0.2);
-        border-radius: 12px;
-        padding: 16px 20px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-    }
-    div[data-testid="stMetric"] label {
-        color: #94a3b8 !important;
-        font-size: 0.85rem !important;
-        font-weight: 500 !important;
-    }
+        border: 1px solid rgba(99,102,241,0.2); border-radius: 12px;
+        padding: 16px 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+    div[data-testid="stMetric"] label { color: #94a3b8 !important; font-size: 0.85rem !important; }
     div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
-        color: #e2e8f0 !important;
-        font-family: 'JetBrains Mono', monospace !important;
-        font-size: 1.4rem !important;
-    }
-
-    /* Sidebar */
-    section[data-testid="stSidebar"] > div {
-        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
-    }
-    section[data-testid="stSidebar"] .stMarkdown h1,
-    section[data-testid="stSidebar"] .stMarkdown h2,
-    section[data-testid="stSidebar"] .stMarkdown h3 {
-        color: #e2e8f0 !important;
-    }
-
-    /* Tables */
-    .stDataFrame { border-radius: 8px; overflow: hidden; }
-
-    /* Expander */
-    .streamlit-expanderHeader {
-        font-family: 'DM Sans', sans-serif !important;
-        font-weight: 600 !important;
-    }
-
-    /* Tab styling */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 8px 8px 0 0;
-        font-family: 'DM Sans', sans-serif;
-        font-weight: 500;
-    }
-
-    /* Info boxes */
-    .info-box {
-        background: rgba(99, 102, 241, 0.1);
-        border-left: 4px solid #6366f1;
-        padding: 12px 16px;
-        border-radius: 0 8px 8px 0;
-        margin: 8px 0;
-        font-size: 0.9rem;
-    }
-</style>
-""", unsafe_allow_html=True)
+        color: #e2e8f0 !important; font-family: monospace !important; font-size: 1.4rem !important; }
+    .info-box { background: rgba(99,102,241,0.1); border-left: 4px solid #6366f1;
+                padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 8px 0; }
+    .bid-box { background: linear-gradient(135deg, #064e3b 0%, #065f46 100%);
+               border: 1px solid #10b981; border-radius: 14px; padding: 24px;
+               text-align: center; }
+    .offer-box { background: linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%);
+                 border: 1px solid #f43f5e; border-radius: 14px; padding: 24px;
+                 text-align: center; }
+    .quote-label { color: #94a3b8; font-size: 0.8rem; text-transform: uppercase;
+                   letter-spacing: 1px; margin-bottom: 6px; }
+    .quote-value { color: #f1f5f9; font-family: monospace; font-size: 1.8rem; font-weight: 700; }
+</style>""", unsafe_allow_html=True)
 
 
 # =============================================================================
-# Sidebar — Market Data Input
+# Bid-offer computation (used by both views)
 # =============================================================================
 
-with st.sidebar:
-    st.markdown("## ⚙️ Market Parameters")
-
-    S0 = st.number_input("Spot Price (S₀)", value=100.0, min_value=0.01, step=1.0, format="%.2f")
-    r = st.number_input("Risk-Free Rate (r)", value=0.02, min_value=-0.05, max_value=0.30, step=0.005, format="%.4f")
-    q = st.number_input("Dividend Yield (q)", value=0.01, min_value=0.0, max_value=0.20, step=0.005, format="%.4f")
-
-    st.markdown("---")
-    st.markdown("## 🔬 Model Selection")
-
-    model_choice = st.selectbox(
-        "Stochastic Volatility Model",
-        options=['heston', 'bates', 'double_heston'],
-        format_func=lambda x: {
-            'heston': 'Heston (1993)',
-            'bates': 'Bates (1996) — with jumps',
-            'double_heston': 'Double Heston (2009)'
-        }[x]
-    )
-
-    st.markdown("---")
-    st.markdown("## 📈 Calibration Settings")
-
-    loss_type = st.selectbox(
-        "Loss Function",
-        options=['ivrmse', 'price_abs', 'iv_relative', 'price_rmse'],
-        format_func=lambda x: {
-            'ivrmse': 'IV RMSE (recommended)',
-            'price_abs': 'Vega-weighted Price (fast)',
-            'iv_relative': 'IV RMSE relative (slower)',
-            'price_rmse': 'Price RMSE relative'
-        }[x]
-    )
-
-    maxiter = st.slider("Max Iterations", 50, 500, 100, 50)
-    popsize = st.slider("Num Restarts", 2, 10, 3, 1)
-
-
-# =============================================================================
-# Main Area
-# =============================================================================
-
-st.markdown("# 📊 Options Market Making — Heston Family")
-st.markdown("""
-<div class="info-box">
-Calibrate <b>Heston</b>, <b>Bates</b>, or <b>Double Heston</b> models to your volatility surface,
-then price vanilla options, binary options, and variance swaps.
-Pricing uses <b>Carr-Madan FFT</b> for speed and the <b>Albrecher et al.</b> formulation for numerical stability.
-</div>
-""", unsafe_allow_html=True)
-
-# =============================================================================
-# Tabs
-# =============================================================================
-
-tab_calib, tab_pricer, tab_exotics, tab_surface, tab_params = st.tabs([
-    "🎯 Calibration", "💰 Vanilla Pricer", "🔮 Exotics", "🌊 Vol Surface", "📋 Parameters"
-])
-
-# =============================================================================
-# TAB 1: CALIBRATION
-# =============================================================================
-
-with tab_calib:
-    st.markdown("### Market Data Input")
-
-    col_upload, col_manual = st.columns([1, 1])
-
-    with col_upload:
-        st.markdown("**Upload volatility surface** (.xlsx or .csv)")
-        uploaded_file = st.file_uploader(
-            "Upload market data",
-            type=['xlsx', 'csv', 'xls'],
-            help="Expected columns: Strike (or K), Maturity (or tau/T), IV (or implied_vol), Type (call/put, optional)"
-        )
-
-    with col_manual:
-        st.markdown("**Or use sample data**")
-        use_sample = st.checkbox("Load sample vol surface", value=True if uploaded_file is None else False)
-
-    # Parse market data
-    market_data = None
-
-    if uploaded_file is not None:
+def compute_bid_offer(product_type, S0, K, r, q, tau, model_results,
+                      option_type='call', spread_bps=50):
+    prices, ivs = [], []
+    for mdl, res in model_results.items():
         try:
-            if uploaded_file.name.endswith('.csv'):
-                df_raw = pd.read_csv(uploaded_file)
+            if product_type == 'vanilla':
+                p = price_european(mdl, S0, K, r, q, tau, res['params'], option_type, 'fft')
+            elif product_type == 'binary_call':
+                p = price_binary_call(mdl, S0, K, r, q, tau, res['params'])
+            elif product_type == 'binary_put':
+                p = price_binary_put(mdl, S0, K, r, q, tau, res['params'])
+            elif product_type == 'varswap':
+                p = variance_swap_vol_strike(mdl, S0, r, q, tau, res['params'])
             else:
-                df_raw = pd.read_excel(uploaded_file)
+                continue
+            if np.isfinite(p) and p > 0:
+                prices.append(p)
+                if product_type == 'vanilla':
+                    iv = implied_vol(p, S0, K, r, q, tau, option_type)
+                    if np.isfinite(iv): ivs.append(iv)
+        except Exception:
+            continue
+    if not prices: return None
+    mid = np.mean(prices)
+    model_unc = (max(prices) - min(prices)) / 2 if len(prices) > 1 else 0
+    if product_type == 'vanilla':
+        base = max(bs_vega(S0, K, r, q, tau, np.mean(ivs) if ivs else 0.2) * spread_bps / 10000, mid * 0.005)
+    elif product_type in ('binary_call', 'binary_put'):
+        base = max(0.005, mid * 0.02)
+    else:
+        base = max(0.002, mid * 0.01)
+    hs = max(base, model_unc)
+    return {'mid': mid, 'bid': max(mid - hs, 0), 'offer': mid + hs,
+            'spread': mid + hs - max(mid - hs, 0), 'ivs': ivs,
+            'n_models': len(prices), 'model_range': max(prices) - min(prices) if len(prices) > 1 else 0}
 
-            st.markdown("**Raw uploaded data:**")
-            st.dataframe(df_raw.head(10), use_container_width=True)
 
-            # Try to map columns
-            col_map = {}
-            for col in df_raw.columns:
-                cl = col.lower().strip()
-                if cl in ['k', 'strike', 'strike_price', 'strikes']:
-                    col_map['K'] = col
-                elif cl in ['tau', 't', 'maturity', 'expiry', 'tte', 'time_to_maturity']:
-                    col_map['tau'] = col
-                elif cl in ['iv', 'implied_vol', 'impliedvol', 'implied_volatility',
-                            'vol', 'sigma', 'implvol', 'imp_vol', 'ivol']:
-                    col_map['iv'] = col
-                elif cl in ['type', 'option_type', 'cp', 'call_put']:
-                    col_map['type'] = col
+def calibrate_all_models(market_data, S0, r, q, max_iter=100, pop_size=3):
+    results = {}
+    for mdl in ['heston', 'bates', 'double_heston']:
+        try:
+            res = calibrate(model=mdl, S0=S0, r=r, q=q, market_data=market_data,
+                            loss_type='ivrmse', maxiter=max_iter, popsize=pop_size)
+            if res['success']: results[mdl] = res
+        except Exception:
+            pass
+    return results
 
-            if 'K' in col_map and 'tau' in col_map and 'iv' in col_map:
-                # First, detect if IVs are in percentage or decimal
-                all_iv_raw = pd.to_numeric(df_raw[col_map['iv']], errors='coerce').dropna()
-                is_percentage = all_iv_raw.median() > 1.0  # median > 1 means percentage
-                if is_percentage:
-                    st.info("📊 Detected IV in percentage format — converting to decimal.")
 
-                market_data = []
-                for _, row in df_raw.iterrows():
-                    iv_val = float(row[col_map['iv']])
-                    if is_percentage:
-                        iv_val = iv_val / 100.0
-                    opt_type = 'call'
-                    if 'type' in col_map:
-                        t = str(row[col_map['type']]).lower().strip()
-                        if t in ['put', 'p']:
-                            opt_type = 'put'
-                    market_data.append({
-                        'K': float(row[col_map['K']]),
-                        'tau': float(row[col_map['tau']]),
-                        'market_iv': iv_val,
-                        'option_type': opt_type,
-                        'weight': 1.0
-                    })
-                st.success(f"✅ Parsed {len(market_data)} market data points.")
+# =============================================================================
+# View toggle
+# =============================================================================
+
+st.markdown("## 📊 Heston Family — Options Market Making")
+
+view = st.radio("", ["🏦 Customer View", "⚙️ Trader View"],
+                horizontal=True, label_visibility="collapsed")
+
+
+# #############################################################################
+# CUSTOMER VIEW
+# #############################################################################
+
+if view == "🏦 Customer View":
+
+    st.markdown("""<div class="info-box">
+    Welcome to our <b>Options Desk</b>. Select a product, enter the contract details,
+    and click <b>Get Quote</b> to receive a tradeable bid-offer price.
+    </div>""", unsafe_allow_html=True)
+
+    # Show spot price (read-only info for the customer)
+    S0 = st.session_state.get('S0_stored', 100.0)
+    r = st.session_state.get('r_stored', 0.02)
+    q = st.session_state.get('q_stored', 0.01)
+
+    st.markdown(f"**Underlying spot price: {S0:,.2f}**")
+
+    col_in, col_out = st.columns([1, 1])
+
+    with col_in:
+        st.markdown("### Product Details")
+        product = st.selectbox("Product Type", [
+            "European Call", "European Put",
+            "Binary Call (cash-or-nothing)", "Binary Put (cash-or-nothing)",
+            "Variance Swap"], key='c_prod')
+        if product != "Variance Swap":
+            c_K = st.number_input("Strike (K)", value=round(S0, 2), min_value=0.01, step=1.0, key='c_K')
+        else:
+            c_K = 0
+        c_tau = st.number_input("Maturity (years)", value=0.5, min_value=0.01, max_value=10.0, step=0.05, key='c_tau')
+        quote_btn = st.button("📋 Get Quote", type="primary", use_container_width=True, key='c_btn')
+
+    with col_out:
+        if quote_btn:
+            mm = st.session_state.get('mm_results')
+            mkt = st.session_state.get('market_data_stored')
+
+            # Auto-calibrate if needed
+            if mm is None and mkt is not None:
+                with st.spinner("Initializing pricing engine..."):
+                    # FIX: Fetch the stored slider settings
+                    stored_iter = st.session_state.get('maxiter_stored', 100)
+                    stored_pop = st.session_state.get('popsize_stored', 3)
+                    
+                    mm = calibrate_all_models(mkt, S0, r, q, max_iter=int(stored_iter), pop_size=int(stored_pop))
+                    st.session_state['mm_results'] = mm
+
+            if mm is None or len(mm) == 0:
+                st.error("Pricing engine not ready. Please ask the trading desk to load market data.")
             else:
-                st.error(f"Could not identify required columns. Found mappings: {col_map}. "
-                         f"Need at least: Strike (K), Maturity (tau), Implied Vol (iv).")
-        except Exception as e:
-            st.error(f"Error reading file: {e}")
+                pmap = {"European Call": ('vanilla', 'call'), "European Put": ('vanilla', 'put'),
+                        "Binary Call (cash-or-nothing)": ('binary_call', 'call'),
+                        "Binary Put (cash-or-nothing)": ('binary_put', 'put'),
+                        "Variance Swap": ('varswap', 'call')}
+                pt, ot = pmap[product]
+                res = compute_bid_offer(pt, S0, c_K, r, q, c_tau, mm, ot)
 
-    if use_sample and market_data is None:
-        # Generate vol surface from a true Heston model
-        # This ensures calibration can recover meaningful parameters
-        sample_params = {'v0': 0.04, 'kappa': 2.0, 'theta': 0.04, 'sigma': 0.5, 'rho': -0.7}
-        maturities = [0.08, 0.17, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0]
-        moneyness_range = np.linspace(0.80, 1.20, 15)
+                if res is None:
+                    st.error("Unable to price this product.")
+                else:
+                    st.markdown("### Tradeable Quote")
+                    is_vs = (pt == 'varswap')
+                    fmt = lambda x: f"{x*100:.2f}%" if is_vs else f"{x:,.4f}"
 
-        market_data = []
-        for tau in maturities:
-            strikes = S0 * moneyness_range
-            prices = price_european('heston', S0, strikes, r, q, tau,
-                                    sample_params, option_type='call', method='fft')
-            for K_val, p_val in zip(strikes, np.atleast_1d(prices)):
-                iv_val = implied_vol(p_val, S0, K_val, r, q, tau)
-                if not np.isnan(iv_val) and iv_val > 0.01:
-                    # Add small noise to simulate real market data
-                    iv_noisy = iv_val + np.random.normal(0, 0.001)
-                    iv_noisy = max(iv_noisy, 0.01)
-                    market_data.append({
-                        'K': round(K_val, 2),
-                        'tau': tau,
-                        'market_iv': round(iv_noisy, 6),
-                        'option_type': 'call',
-                        'weight': 1.0
-                    })
+                    c1, c2 = st.columns(2)
+                    c1.markdown(f'<div class="bid-box"><div class="quote-label">BID</div>'
+                                f'<div class="quote-value">{fmt(res["bid"])}</div></div>',
+                                unsafe_allow_html=True)
+                    c2.markdown(f'<div class="offer-box"><div class="quote-label">OFFER</div>'
+                                f'<div class="quote-value">{fmt(res["offer"])}</div></div>',
+                                unsafe_allow_html=True)
 
-        st.info(f"📊 Using Heston-generated vol surface: {len(market_data)} data points "
-                f"({len(maturities)} maturities × {len(moneyness_range)} strikes)")
-        st.caption("Sample surface generated from Heston(v₀=0.04, κ=2, θ=0.04, ξ=0.5, ρ=-0.7)")
+                    mc1, mc2 = st.columns(2)
+                    mc1.metric("Mid", fmt(res['mid']))
+                    mc2.metric("Spread", fmt(res['spread']))
 
-    if market_data is not None:
-        # Display market data summary
-        df_mkt = pd.DataFrame(market_data)
-        with st.expander("📋 Market Data Preview", expanded=False):
-            st.dataframe(df_mkt.head(20), use_container_width=True)
+                    if res['ivs']:
+                        st.metric("Indicative Vol", f"{np.mean(res['ivs'])*100:.2f}%")
 
-        # Calibration button
+                    st.caption("Quotes are indicative and subject to market conditions.")
+
+    # Batch
+    st.markdown("---")
+    with st.expander("📋 Batch Quote Request"):
+        batch = st.text_area("One per line: type, strike, maturity",
+            value="call, 4200, 0.25\ncall, 4450, 0.50\nput, 4200, 0.50\nbinary_call, 4450, 0.25\nvarswap, 0, 1.0",
+            height=120, key='c_batch')
+        if st.button("Get All Quotes", type="primary", key='c_batch_btn'):
+            mm = st.session_state.get('mm_results')
+            if mm is None:
+                st.error("Pricing engine not ready.")
+            else:
+                rows = []
+                for line in batch.strip().split('\n'):
+                    parts = [p.strip() for p in line.split(',')]
+                    if len(parts) >= 3:
+                        try:
+                            pt, k, t = parts[0].lower(), float(parts[1]), float(parts[2])
+                            if pt in ('call','put'):
+                                r2 = compute_bid_offer('vanilla', S0, k, r, q, t, mm, pt)
+                            elif pt == 'binary_call':
+                                r2 = compute_bid_offer('binary_call', S0, k, r, q, t, mm)
+                            elif pt == 'binary_put':
+                                r2 = compute_bid_offer('binary_put', S0, k, r, q, t, mm)
+                            elif pt == 'varswap':
+                                r2 = compute_bid_offer('varswap', S0, 0, r, q, t, mm)
+                            else: r2 = None
+                            if r2:
+                                is_vs = pt == 'varswap'
+                                f = lambda x: f"{x*100:.2f}%" if is_vs else f"{x:.4f}"
+                                rows.append({'Product': pt.upper(), 'Strike': '-' if is_vs else k,
+                                            'Maturity': t, 'Bid': f(r2['bid']), 'Offer': f(r2['offer']),
+                                            'Spread': f(r2['spread'])})
+                        except: pass
+                if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+
+# #############################################################################
+# TRADER VIEW
+# #############################################################################
+
+if view == "⚙️ Trader View":
+
+    # Sidebar
+    with st.sidebar:
+        st.markdown("## ⚙️ Market Parameters")
+        
+        # 1. Retrieve stored values (or use defaults)
+        saved_S0 = st.session_state.get('S0_stored', 100.0)
+        saved_r  = st.session_state.get('r_stored', 0.02)
+        saved_q  = st.session_state.get('q_stored', 0.01)
+
+        S0 = st.number_input("Spot Price (S₀)", value=float(saved_S0), min_value=0.01, step=1.0, format="%.2f", key='t_S0')
+        r = st.number_input("Risk-Free Rate (r)", value=float(saved_r), min_value=-0.05, max_value=0.30, step=0.005, format="%.4f", key='t_r')
+        q = st.number_input("Dividend Yield (q)", value=float(saved_q), min_value=0.0, max_value=0.20, step=0.005, format="%.4f", key='t_q')
+
         st.markdown("---")
-        col_btn, col_status = st.columns([1, 3])
-        with col_btn:
-            run_calib = st.button("🚀 Run Calibration", type="primary", use_container_width=True)
+        st.markdown("## 🔬 Model")
+        
+        # 2. Handle Model Selectbox State
+        model_opts = ['heston', 'bates', 'double_heston']
+        saved_model = st.session_state.get('model_stored', 'heston')
+        model_idx = model_opts.index(saved_model) if saved_model in model_opts else 0
+        
+        model_choice = st.selectbox("Model", model_opts, index=model_idx,
+            format_func=lambda x: {'heston':'Heston (1993)','bates':'Bates (1996) — jumps',
+                                    'double_heston':'Double Heston (2009)'}[x], key='t_model')
 
-        if run_calib:
-            with st.spinner(f"Calibrating {model_choice.replace('_', ' ').title()} model..."):
-                result = calibrate(
-                    model=model_choice,
-                    S0=S0, r=r, q=q,
-                    market_data=market_data,
-                    loss_type=loss_type,
-                    maxiter=maxiter,
-                    popsize=popsize,
-                )
-                st.session_state['calib_result'] = result
-                st.session_state['calib_model'] = model_choice
-                st.session_state['market_data'] = market_data
+        st.markdown("---")
+        st.markdown("## 📈 Calibration")
+        
+        # 3. Handle Loss Selectbox State
+        loss_opts = ['ivrmse', 'price_abs', 'iv_relative', 'price_rmse']
+        saved_loss = st.session_state.get('loss_stored', 'ivrmse')
+        loss_idx = loss_opts.index(saved_loss) if saved_loss in loss_opts else 0
+        
+        loss_type = st.selectbox("Loss", loss_opts, index=loss_idx,
+            format_func=lambda x: {'ivrmse':'IV RMSE','price_abs':'Vega-wtd Price (fast)',
+                                    'iv_relative':'IV RMSE relative','price_rmse':'Price RMSE'}[x], key='t_loss')
+        
+        # 4. Handle Slider States
+        saved_maxiter = st.session_state.get('maxiter_stored', 100)
+        saved_popsize = st.session_state.get('popsize_stored', 3)
+        
+        maxiter = st.slider("Max Iter", 50, 500, value=int(saved_maxiter), step=50, key='t_iter')
+        popsize = st.slider("Restarts", 2, 10, value=int(saved_popsize), step=1, key='t_pop')
 
-        # Display results
+    # Store ALL current values back into session_state immediately after the sidebar
+    st.session_state['S0_stored'] = S0
+    st.session_state['r_stored'] = r
+    st.session_state['q_stored'] = q
+    st.session_state['model_stored'] = model_choice
+    st.session_state['loss_stored'] = loss_type
+    st.session_state['maxiter_stored'] = maxiter
+    st.session_state['popsize_stored'] = popsize
+
+    # Tabs
+    tab_cal, tab_van, tab_exo, tab_surf, tab_doc = st.tabs([
+        "🎯 Calibration", "💰 Vanilla Pricer", "🔮 Exotics", "🌊 Vol Surface", "📋 Documentation"])
+
+    # ── CALIBRATION ──────────────────────────────────────────────
+    with tab_cal:
+        st.markdown("### Market Data")
+        col1, col2 = st.columns(2)
+        with col1:
+            uploaded = st.file_uploader("Upload vol surface (.xlsx/.csv)", type=['xlsx','xls','csv'], key='t_file')
+        with col2:
+            use_sample = st.checkbox("Use sample Heston surface", value=uploaded is None, key='t_sample')
+
+        market_data = None
+        if uploaded:
+            try:
+                df = pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
+                col_map = {}
+                for c in df.columns:
+                    cl = c.lower().strip()
+                    if cl in ['k','strike','strike_price','strikes']: col_map['K'] = c
+                    elif cl in ['tau','t','maturity','expiry','tte','time_to_maturity']: col_map['tau'] = c
+                    elif cl in ['iv','implied_vol','impliedvol','implied_volatility','vol','sigma','implvol','imp_vol','ivol']: col_map['iv'] = c
+                    elif cl in ['type','option_type','cp','call_put']: col_map['type'] = c
+                if 'K' in col_map and 'tau' in col_map and 'iv' in col_map:
+                    all_iv = pd.to_numeric(df[col_map['iv']], errors='coerce').dropna()
+                    is_pct = all_iv.median() > 1.0
+                    if is_pct: st.info("Detected IV in percentage — converting.")
+                    market_data = []
+                    for _, row in df.iterrows():
+                        iv = float(row[col_map['iv']])
+                        if is_pct: iv /= 100
+                        ot = 'call'
+                        if 'type' in col_map:
+                            t = str(row[col_map['type']]).lower().strip()
+                            if t in ['put','p']: ot = 'put'
+                        market_data.append({'K':float(row[col_map['K']]), 'tau':float(row[col_map['tau']]),
+                                           'market_iv':iv, 'option_type':ot, 'weight':1.0})
+                    st.success(f"✅ {len(market_data)} data points loaded.")
+                else:
+                    st.error(f"Cannot map columns. Found: {col_map}")
+            except Exception as e:
+                st.error(str(e))
+
+        if use_sample and market_data is None:
+            sp = {'v0':0.04,'kappa':2.0,'theta':0.04,'sigma':0.5,'rho':-0.7}
+            market_data = []
+            for tau in [0.08,0.17,0.25,0.5,0.75,1.0,1.5,2.0]:
+                strikes = S0 * np.linspace(0.8, 1.2, 15)
+                prices = price_european('heston', S0, strikes, r, q, tau, sp, 'call', 'fft')
+                for K_v, p_v in zip(strikes, np.atleast_1d(prices)):
+                    iv_v = implied_vol(p_v, S0, K_v, r, q, tau)
+                    if np.isfinite(iv_v) and iv_v > 0.01:
+                        market_data.append({'K':round(K_v,2),'tau':tau,'market_iv':round(iv_v+np.random.normal(0,0.001),6),
+                                           'option_type':'call','weight':1.0})
+            st.info(f"Sample Heston surface: {len(market_data)} points")
+
+        if market_data:
+            st.session_state['market_data_stored'] = market_data
+            with st.expander("Preview", expanded=False):
+                st.dataframe(pd.DataFrame(market_data).head(20), use_container_width=True)
+
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("🚀 Calibrate Selected Model", type="primary", use_container_width=True, key='t_cal1'):
+                    with st.spinner(f"Calibrating {model_choice}..."):
+                        result = calibrate(model=model_choice, S0=S0, r=r, q=q, market_data=market_data,
+                                          loss_type=loss_type, maxiter=maxiter, popsize=popsize)
+                        st.session_state['calib_result'] = result
+                        st.session_state['calib_model'] = model_choice
+                        st.session_state['calib_market_data'] = market_data
+            with c2:
+                if st.button("🔄 Calibrate All 3 Models (for Quotes)", type="secondary", use_container_width=True, key='t_cal_all'):
+                    with st.spinner("Calibrating Heston, Bates & Double Heston..."):
+                        # FIX: Pass the maxiter and popsize from the sliders!
+                        mm = calibrate_all_models(market_data, S0, r, q, max_iter=maxiter, pop_size=popsize)
+                        
+                        st.session_state['mm_results'] = mm
+                        st.session_state['mm_models_calibrated'] = True
+                        
+                        if model_choice in mm:
+                            st.session_state['calib_result'] = mm[model_choice]
+                            st.session_state['calib_model'] = model_choice
+                            st.session_state['calib_market_data'] = market_data
+                            
+                        st.success(f"✅ {len(mm)} models ready: {', '.join(m.replace('_',' ').title() for m in mm)}")
+
         if 'calib_result' in st.session_state:
             result = st.session_state['calib_result']
-
             st.markdown("### Calibration Results")
-
-            # Metrics
+            
+            # --- UI UPGRADE: Beautiful Metric Cards ---
             params = result['params']
             n_params = len(params)
-
             metric_cols = st.columns(min(n_params + 1, 6))
             metric_cols[0].metric("RMSE", f"{result['rmse']:.6f}")
-
+            
             param_items = list(params.items())
             col_idx = 1
             for name, val in param_items:
-                if col_idx >= len(metric_cols):
-                    break
+                if col_idx >= len(metric_cols): break
                 label_map = {
                     'v0': 'v₀', 'kappa': 'κ', 'theta': 'θ', 'sigma': 'ξ', 'rho': 'ρ',
                     'lambda_j': 'λⱼ', 'mu_j': 'μⱼ', 'sigma_j': 'σⱼ',
@@ -343,518 +398,201 @@ with tab_calib:
                 metric_cols[col_idx].metric(label_map.get(name, name), f"{val:.4f}")
                 col_idx += 1
 
+            # Handle extra parameters for Bates/Double Heston
             if n_params > 5:
                 metric_cols2 = st.columns(min(n_params - 4, 6))
                 for i, (name, val) in enumerate(param_items[5:]):
-                    if i >= len(metric_cols2):
-                        break
+                    if i >= len(metric_cols2): break
                     label_map = {
                         'lambda_j': 'λⱼ', 'mu_j': 'μⱼ', 'sigma_j': 'σⱼ',
                         'v02': 'v₀²', 'kappa2': 'κ²', 'theta2': 'θ²', 'sigma2': 'ξ²', 'rho2': 'ρ²',
                     }
                     metric_cols2[i].metric(label_map.get(name, name), f"{val:.4f}")
 
-            # Feller condition check
-            if model_choice in ['heston', 'bates']:
-                feller = 2 * params['kappa'] * params['theta'] - params['sigma'] ** 2
-                if feller > 0:
-                    st.success(f"✅ Feller condition satisfied: 2κθ - ξ² = {feller:.4f} > 0")
-                else:
-                    st.warning(f"⚠️ Feller condition violated: 2κθ - ξ² = {feller:.4f} < 0 (variance can reach zero)")
+            if st.session_state['calib_model'] in ['heston','bates']:
+                f = 2*params['kappa']*params['theta'] - params['sigma']**2
+                if f > 0: st.success(f"✅ Feller condition satisfied: 2κθ - ξ² = {f:.4f} > 0")
+                else: st.warning(f"⚠️ Feller condition violated: 2κθ - ξ² = {f:.4f} < 0")
+
+            # --- UI UPGRADE: Enhanced Plotly Chart ---
+            if result['model_ivs'] is not None:
+                # FETCH THE SAVED DATA HERE
+                plot_data = st.session_state.get('calib_market_data', market_data) 
+                
+                df_fit = pd.DataFrame({
+                    'Strike': [m['K'] for m in plot_data],
+                    'Tau': [m['tau'] for m in plot_data],
+                    'Market': result['market_ivs'] * 100, 
+                    'Model': result['model_ivs'] * 100
+                })
+                df_fit = df_fit.dropna()
+                
+                if len(df_fit) > 0:
+                    fig = make_subplots(rows=1, cols=2, subplot_titles=("Implied Volatility Fit", "Calibration Error (bps)"), horizontal_spacing=0.08)
+                    taus = sorted(df_fit['Tau'].unique())
+                    sel = taus[::max(1, len(taus)//6)]
+                    colors = ['#6366f1', '#f43f5e', '#10b981', '#f59e0b', '#3b82f6', '#8b5cf6']
+                    
+                    for i, t in enumerate(sel):
+                        s = df_fit[df_fit['Tau'] == t]
+                        c = colors[i % len(colors)]
+                        lb = f"τ={t:.2f}"
+                        
+                        # Market points as open circles
+                        fig.add_trace(go.Scatter(x=s['Strike'], y=s['Market'], mode='markers', name=f'{lb} mkt',
+                            marker=dict(color=c, size=6, symbol='circle-open', line=dict(width=1.5)), legendgroup=lb), row=1, col=1)
+                        
+                        # Model fit as solid lines
+                        fig.add_trace(go.Scatter(x=s['Strike'], y=s['Model'], mode='lines', name=f'{lb} mdl',
+                            line=dict(color=c, width=2), legendgroup=lb), row=1, col=1)
+                        
+                        # Error bars
+                        fig.add_trace(go.Bar(x=s['Strike'], y=(s['Model'] - s['Market']) * 100, name=f'{lb} err',
+                            marker_color=c, opacity=0.7, legendgroup=lb, showlegend=False), row=1, col=2)
+                            
+                    fig.update_layout(
+                        height=500, template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)',
+                        plot_bgcolor='rgba(15, 23, 42, 0.8)', margin=dict(t=40, b=40),
+                        font=dict(family='DM Sans', size=12), legend=dict(font=dict(size=10))
+                    )
+                    
+                    fig.update_xaxes(title_text="Strike", gridcolor='rgba(100,100,100,0.2)')
+                    fig.update_yaxes(title_text="Implied Vol (%)", row=1, col=1, gridcolor='rgba(100,100,100,0.2)')
+                    fig.update_yaxes(title_text="Error (bps)", row=1, col=2, gridcolor='rgba(100,100,100,0.2)')
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+
+    # ── VANILLA PRICER ───────────────────────────────────────────
+    with tab_van:
+        st.markdown("### European Option Pricer")
+        if 'calib_result' not in st.session_state:
+            st.warning("Calibrate a model first.")
+        else:
+            pp = st.session_state['calib_result']['params']
+            pm = st.session_state['calib_model']
+            ci, co = st.columns([1,1])
+            with ci:
+                ot = st.selectbox("Type", ['call','put'], key='v_type')
+                vK = st.number_input("Strike", value=S0, min_value=0.01, step=1.0, key='v_K')
+                vt = st.number_input("Maturity (yrs)", value=0.5, min_value=0.01, max_value=10.0, step=0.05, key='v_tau')
+                if st.button("💰 Price", type="primary", use_container_width=True, key='v_btn'):
+                    p = price_european(pm, S0, vK, r, q, vt, pp, ot, 'fft')
+                    iv = implied_vol(p, S0, vK, r, q, vt, ot)
+                    dS = S0*0.005
+                    pu = price_european(pm,S0+dS,vK,r,q,vt,pp,ot); pd2 = price_european(pm,S0-dS,vK,r,q,vt,pp,ot)
+                    delta = (pu-pd2)/(2*dS); gamma = (pu-2*p+pd2)/(dS**2)
+                    dt = 1/365
+                    theta = (price_european(pm,S0,vK,r,q,vt-dt,pp,ot)-p) if vt>dt else 0
+                    rho_g = price_european(pm,S0,vK,r+0.01,q,vt,pp,ot)-p
+                    pp2 = dict(pp); dv=0.01
+                    if 'v0' in pp2: pp2['v0']+=dv
+                    elif 'v01' in pp2: pp2['v01']+=dv
+                    vega = price_european(pm,S0,vK,r,q,vt,pp2,ot)-p
+                    with co:
+                        st.markdown("### Pricing Result")
+                        m1,m2 = st.columns(2); m1.metric("Price",f"{p:.4f}"); m2.metric("Implied Vol",f"{iv*100:.2f}%")
+                        m3,m4,m5 = st.columns(3); m3.metric("Delta",f"{delta:.4f}"); m4.metric("Gamma",f"{gamma:.2e}"); m5.metric("Theta/day",f"{theta:.4f}")
+                        m6,m7 = st.columns(2); m6.metric("Rho/1%",f"{rho_g:.4f}"); m7.metric("Vega/1vol",f"{vega:.4f}")
+
+            # Batch
+            st.markdown("---")
+            with st.expander("Batch Pricing"):
+                bi = st.text_area("Type, Strike, Maturity",
+                    value="call, 90, 0.25\ncall, 100, 0.25\nput, 95, 0.5", height=100, key='v_batch')
+                if st.button("Price All", key='v_batch_btn'):
+                    rows = []
+                    for line in bi.strip().split('\n'):
+                        pts = [x.strip() for x in line.split(',')]
+                        if len(pts)>=3:
+                            try:
+                                o,k,t = pts[0].lower(),float(pts[1]),float(pts[2])
+                                p = price_european(pm,S0,k,r,q,t,pp,o,'fft')
+                                iv = implied_vol(p,S0,k,r,q,t,o)
+                                rows.append({'Type':o.upper(),'Strike':k,'Mat':t,'Price':round(p,4),'IV%':round(iv*100,2)})
+                            except: pass
+                    if rows: st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+    # ── EXOTICS ──────────────────────────────────────────────────
+    with tab_exo:
+        if 'calib_result' not in st.session_state:
+            st.warning("Calibrate first.")
+        else:
+            ep = st.session_state['calib_result']['params']
+            em = st.session_state['calib_model']
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("#### 🎰 Binary Options")
+                bt = st.selectbox("Type",['call','put'],key='b_type')
+                bK = st.number_input("Strike",value=S0,min_value=0.01,step=1.0,key='b_K')
+                bT = st.number_input("Maturity",value=0.25,min_value=0.01,step=0.05,key='b_tau')
+                if st.button("Price Binary",type="primary",key='b_btn'):
+                    bp = price_binary_call(em,S0,bK,r,q,bT,ep) if bt=='call' else price_binary_put(em,S0,bK,r,q,bT,ep)
+                    d = np.exp(-r*bT)
+                    m1,m2 = st.columns(2); m1.metric("Binary Price",f"{bp:.6f}"); m2.metric("RN Prob",f"{bp/d*100:.2f}%")
+                    ks = np.linspace(S0*0.85,S0*1.15,30)
+                    bps = [price_binary_call(em,S0,k,r,q,bT,ep) if bt=='call' else price_binary_put(em,S0,k,r,q,bT,ep) for k in ks]
+                    fig = go.Figure(go.Scatter(x=ks,y=bps,mode='lines',line=dict(color='#6366f1',width=2.5),fill='tozeroy',fillcolor='rgba(99,102,241,0.1)'))
+                    fig.update_layout(title=f"Binary {bt} strip",xaxis_title="Strike",yaxis_title="Price",height=300,template='plotly_dark',paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(15,23,42,0.8)')
+                    st.plotly_chart(fig,use_container_width=True)
+            with c2:
+                st.markdown("#### 📐 Variance Swaps")
+                vT = st.number_input("Maturity",value=1.0,min_value=0.01,step=0.1,key='vs_tau')
+                if st.button("Compute",type="primary",key='vs_btn'):
+                    fv = variance_swap_strike(em,S0,r,q,vT,ep)
+                    vs = variance_swap_vol_strike(em,S0,r,q,vT,ep)
+                    m1,m2 = st.columns(2); m1.metric("Fair Var",f"{fv:.6f}"); m2.metric("Vol Strike",f"{vs*100:.2f}%")
+                    ts = np.linspace(0.05,5,50)
+                    vss = [variance_swap_vol_strike(em,S0,r,q,t,ep)*100 for t in ts]
+                    fig = go.Figure(go.Scatter(x=ts,y=vss,mode='lines',line=dict(color='#10b981',width=2.5)))
+                    fig.update_layout(title="Term Structure",xaxis_title="Maturity",yaxis_title="Vol Strike (%)",height=300,template='plotly_dark',paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(15,23,42,0.8)')
+                    st.plotly_chart(fig,use_container_width=True)
+
+    # ── VOL SURFACE ──────────────────────────────────────────────
+    with tab_surf:
+        if 'calib_result' not in st.session_state:
+            st.warning("Calibrate first.")
+        else:
+            sp = st.session_state['calib_result']['params']
+            sm = st.session_state['calib_model']
+            c1,c2,c3,c4 = st.columns(4)
+            kmin = c1.number_input("Min K",value=S0*0.7,key='s_kmin')
+            kmax = c2.number_input("Max K",value=S0*1.3,key='s_kmax')
+            tmin = c3.number_input("Min T",value=0.05,key='s_tmin')
+            tmax = c4.number_input("Max T",value=2.0,key='s_tmax')
+            if st.button("🌊 Generate",type="primary",key='s_btn'):
+                with st.spinner("Computing..."):
+                    ks = np.linspace(kmin,kmax,25); ts = np.linspace(tmin,tmax,15)
+                    iv_mat = np.zeros((15,25))
+                    for i,t in enumerate(ts):
+                        ps = price_european(sm,S0,ks,r,q,t,sp,'call','fft')
+                        for j,(k,p) in enumerate(zip(ks,np.atleast_1d(ps))):
+                            try: iv_mat[i,j] = implied_vol(p,S0,k,r,q,t)*100
+                            except: iv_mat[i,j] = np.nan
+                    fig = go.Figure(go.Surface(x=ks,y=ts,z=iv_mat,colorscale='Viridis',opacity=0.9))
+                    fig.update_layout(title="Implied Vol Surface",scene=dict(xaxis_title='Strike',yaxis_title='Maturity',zaxis_title='IV(%)'),
+                                      height=550,template='plotly_dark',paper_bgcolor='rgba(0,0,0,0)')
+                    st.plotly_chart(fig,use_container_width=True)
+
+    # ── DOCUMENTATION ────────────────────────────────────────────
+    with tab_doc:
+        st.markdown("""
+### Model Specifications
+
+**Heston (1993):** $dS = (r-q)S\\,dt + \\sqrt{v}S\\,dW^S$, $dv = \\kappa(\\theta-v)dt + \\xi\\sqrt{v}dW^v$, corr $= \\rho$
+
+**Bates (1996):** Heston + Merton log-normal jumps ($\\lambda_J, \\mu_J, \\sigma_J$)
+
+**Double Heston (2009):** Two independent CIR variance factors
+
+### Implementation
+- **Pricing:** Carr-Madan FFT (N=4096, Simpson weights)
+- **Char. function:** Albrecher et al. (2007) little Heston trap
+- **Calibration:** Multi-start Nelder-Mead + L-BFGS-B
+- **Binary options:** Numerical differentiation of call prices
+- **Variance swaps:** Analytical formula
+- **Market making:** Bid-offer from 3-model ensemble + vega-weighted spread
+        """)
 
-            # Fit chart
-            st.markdown("### Model Fit")
-
-            df_fit = pd.DataFrame({
-                'Strike': [md['K'] for md in market_data],
-                'Maturity': [md['tau'] for md in market_data],
-                'Market IV': result['market_ivs'],
-                'Model IV': result['model_ivs'],
-            })
-            df_fit['Error (bps)'] = (df_fit['Model IV'] - df_fit['Market IV']) * 10000
-            df_fit = df_fit.dropna()
-
-            # Choose a few maturities to plot
-            unique_taus = sorted(df_fit['Maturity'].unique())
-            selected_taus = unique_taus[::max(1, len(unique_taus) // 6)]
-
-            fig = make_subplots(rows=1, cols=2, subplot_titles=("Implied Volatility Fit", "Calibration Error (bps)"),
-                                horizontal_spacing=0.08)
-
-            colors = ['#6366f1', '#f43f5e', '#10b981', '#f59e0b', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6']
-
-            for i, tau in enumerate(selected_taus):
-                mask = df_fit['Maturity'] == tau
-                color = colors[i % len(colors)]
-                label = f"τ={tau:.2f}"
-
-                # Market IV
-                fig.add_trace(go.Scatter(
-                    x=df_fit[mask]['Strike'], y=df_fit[mask]['Market IV'] * 100,
-                    mode='markers', name=f'{label} (mkt)',
-                    marker=dict(color=color, size=6, symbol='circle-open', line=dict(width=1.5)),
-                    legendgroup=label, showlegend=True
-                ), row=1, col=1)
-
-                # Model IV
-                fig.add_trace(go.Scatter(
-                    x=df_fit[mask]['Strike'], y=df_fit[mask]['Model IV'] * 100,
-                    mode='lines', name=f'{label} (mdl)',
-                    line=dict(color=color, width=2),
-                    legendgroup=label, showlegend=True
-                ), row=1, col=1)
-
-                # Error
-                fig.add_trace(go.Bar(
-                    x=df_fit[mask]['Strike'], y=df_fit[mask]['Error (bps)'],
-                    name=f'{label} err',
-                    marker_color=color, opacity=0.7,
-                    legendgroup=label, showlegend=False
-                ), row=1, col=2)
-
-            fig.update_layout(
-                height=500,
-                template='plotly_dark',
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(15, 23, 42, 0.8)',
-                font=dict(family='DM Sans', size=12),
-                legend=dict(font=dict(size=10)),
-                margin=dict(t=40, b=40),
-            )
-            fig.update_xaxes(title_text="Strike", row=1, col=1, gridcolor='rgba(100,100,100,0.2)')
-            fig.update_xaxes(title_text="Strike", row=1, col=2, gridcolor='rgba(100,100,100,0.2)')
-            fig.update_yaxes(title_text="Implied Vol (%)", row=1, col=1, gridcolor='rgba(100,100,100,0.2)')
-            fig.update_yaxes(title_text="Error (bps)", row=1, col=2, gridcolor='rgba(100,100,100,0.2)')
-
-            st.plotly_chart(fig, use_container_width=True)
-
-
-# =============================================================================
-# TAB 2: VANILLA PRICER
-# =============================================================================
-
-with tab_pricer:
-    st.markdown("### European Option Pricer")
-
-    if 'calib_result' not in st.session_state:
-        st.warning("⚠️ Please calibrate a model first in the Calibration tab, or set parameters manually below.")
-
-    # Allow manual parameter override
-    use_calib = False
-    if 'calib_result' in st.session_state:
-        use_calib = st.checkbox("Use calibrated parameters", value=True)
-
-    if use_calib and 'calib_result' in st.session_state:
-        pricing_params = st.session_state['calib_result']['params']
-        pricing_model = st.session_state['calib_model']
-    else:
-        pricing_model = model_choice
-        pricing_params = dict(DEFAULT_PARAMS[model_choice])
-
-        st.markdown("**Manual Parameters:**")
-        param_cols = st.columns(min(len(pricing_params), 5))
-        names = PARAM_NAMES[pricing_model]
-        for i, name in enumerate(names):
-            col = param_cols[i % len(param_cols)]
-            lo, hi = PARAM_BOUNDS[pricing_model][name]
-            pricing_params[name] = col.number_input(
-                name, value=pricing_params[name],
-                min_value=lo, max_value=hi,
-                step=0.01, format="%.4f", key=f"manual_{name}"
-            )
-
-    st.markdown("---")
-
-    col_input, col_result = st.columns([1, 1])
-
-    with col_input:
-        st.markdown("**Option Contract**")
-        opt_type = st.selectbox("Type", ['call', 'put'], key='vanilla_type')
-        K_input = st.number_input("Strike (K)", value=S0, min_value=0.01, step=1.0, format="%.2f", key='vanilla_K')
-        tau_input = st.number_input("Time to Maturity (years)", value=0.5, min_value=0.01, max_value=10.0,
-                                    step=0.05, format="%.4f", key='vanilla_tau')
-
-        price_btn = st.button("💰 Price Option", type="primary", key='price_vanilla')
-
-    with col_result:
-        if price_btn:
-            try:
-                price = price_european(pricing_model, S0, K_input, r, q, tau_input,
-                                       pricing_params, option_type=opt_type, method='fft')
-                iv = implied_vol(price, S0, K_input, r, q, tau_input, opt_type)
-
-                # Greeks via finite differences (scaled for large S0)
-                dS = S0 * 0.005  # 0.5% bump
-                dtau = 1.0 / 365
-                dr_bump = 0.0001
-
-                p_up = price_european(pricing_model, S0 + dS, K_input, r, q, tau_input, pricing_params, opt_type)
-                p_dn = price_european(pricing_model, S0 - dS, K_input, r, q, tau_input, pricing_params, opt_type)
-                delta = (p_up - p_dn) / (2 * dS)
-                gamma = (p_up - 2 * price + p_dn) / (dS ** 2)
-
-                # Theta: price change per 1 calendar day (negative = time decay)
-                if tau_input > dtau:
-                    p_t = price_european(pricing_model, S0, K_input, r, q, tau_input - dtau, pricing_params, opt_type)
-                    theta_1d = p_t - price  # dollar theta per day
-                else:
-                    theta_1d = 0.0
-
-                # Rho: per 1% rate move (not per 1bp)
-                p_r = price_european(pricing_model, S0, K_input, r + 0.01, q, tau_input, pricing_params, opt_type)
-                rho_1pct = p_r - price  # dollar rho per 1% rate
-
-                # Vega: per 1 vol point (bump v0 by ~1 vol point squared)
-                params_v = dict(pricing_params)
-                dv = 0.01  # ~1 vol point in variance terms
-                if 'v0' in params_v:
-                    params_v['v0'] += dv
-                elif 'v01' in params_v:
-                    params_v['v01'] += dv
-                p_v = price_european(pricing_model, S0, K_input, r, q, tau_input, params_v, opt_type)
-                vega = p_v - price  # dollar vega per 1 vol pt bump in v0
-
-                st.markdown("**Pricing Result**")
-
-                m1, m2 = st.columns(2)
-                m1.metric("Price", f"{price:.4f}")
-                m2.metric("Implied Vol", f"{iv * 100:.2f}%")
-
-                m3, m4, m5 = st.columns(3)
-                m3.metric("Delta", f"{delta:.4f}")
-                m4.metric("Gamma", f"{gamma:.2e}")
-                m5.metric("Theta /day", f"{theta_1d:.4f}")
-
-                m6, m7 = st.columns(2)
-                m6.metric("Rho /1%", f"{rho_1pct:.4f}")
-                m7.metric("Vega /1vol", f"{vega:.4f}")
-
-            except Exception as e:
-                st.error(f"Pricing error: {e}")
-
-    # Batch pricer
-    st.markdown("---")
-    st.markdown("### Batch Pricing")
-
-    with st.expander("📋 Price multiple options at once"):
-        batch_input = st.text_area(
-            "Enter options (one per line): Type, Strike, Maturity",
-            value="call, 90, 0.25\ncall, 100, 0.25\ncall, 110, 0.25\nput, 95, 0.5\nput, 100, 0.5\nput, 105, 0.5",
-            height=150
-        )
-
-        if st.button("Price All", key='batch_price'):
-            results = []
-            for line in batch_input.strip().split('\n'):
-                parts = [p.strip() for p in line.split(',')]
-                if len(parts) >= 3:
-                    try:
-                        ot, k, t = parts[0].lower(), float(parts[1]), float(parts[2])
-                        p = price_european(pricing_model, S0, k, r, q, t,
-                                           pricing_params, option_type=ot, method='fft')
-                        iv_val = implied_vol(p, S0, k, r, q, t, ot)
-                        results.append({
-                            'Type': ot.upper(),
-                            'Strike': k,
-                            'Maturity': t,
-                            'Price': round(p, 4),
-                            'IV (%)': round(iv_val * 100, 2),
-                            'Moneyness': round(k / S0, 4),
-                        })
-                    except Exception as e:
-                        results.append({
-                            'Type': parts[0], 'Strike': parts[1], 'Maturity': parts[2],
-                            'Price': 'ERROR', 'IV (%)': str(e), 'Moneyness': ''
-                        })
-
-            st.dataframe(pd.DataFrame(results), use_container_width=True)
-
-
-# =============================================================================
-# TAB 3: EXOTICS (Binary Options + Variance Swaps)
-# =============================================================================
-
-with tab_exotics:
-    st.markdown("### Exotic Derivatives Pricer")
-
-    if 'calib_result' in st.session_state:
-        ex_params = st.session_state['calib_result']['params']
-        ex_model = st.session_state['calib_model']
-        st.info(f"Using calibrated {ex_model.replace('_', ' ').title()} parameters")
-    else:
-        ex_params = DEFAULT_PARAMS[model_choice]
-        ex_model = model_choice
-        st.warning("Using default parameters. Calibrate first for accurate pricing.")
-
-    col_bin, col_var = st.columns(2)
-
-    with col_bin:
-        st.markdown("#### 🎰 Binary (Digital) Options")
-        st.markdown("Cash-or-nothing binary options paying 1 unit if ITM at expiry.")
-
-        bin_type = st.selectbox("Binary Type", ['call', 'put'], key='bin_type')
-        bin_K = st.number_input("Strike", value=S0, min_value=0.01, step=1.0, key='bin_K')
-        bin_tau = st.number_input("Maturity (yrs)", value=0.25, min_value=0.01, step=0.05, key='bin_tau')
-
-        if st.button("Price Binary", type="primary", key='price_bin'):
-            try:
-                if bin_type == 'call':
-                    bp = price_binary_call(ex_model, S0, bin_K, r, q, bin_tau, ex_params)
-                else:
-                    bp = price_binary_put(ex_model, S0, bin_K, r, q, bin_tau, ex_params)
-
-                disc = np.exp(-r * bin_tau)
-                prob = bp / disc  # risk-neutral probability
-
-                c1, c2 = st.columns(2)
-                c1.metric("Binary Price", f"{bp:.6f}")
-                c2.metric("RN Probability", f"{prob * 100:.2f}%")
-
-                # Binary option strip
-                st.markdown("**Binary option strip across strikes:**")
-                strikes = np.linspace(S0 * 0.85, S0 * 1.15, 30)
-                bin_prices = []
-                for k in strikes:
-                    if bin_type == 'call':
-                        bin_prices.append(price_binary_call(ex_model, S0, k, r, q, bin_tau, ex_params))
-                    else:
-                        bin_prices.append(price_binary_put(ex_model, S0, k, r, q, bin_tau, ex_params))
-
-                fig_bin = go.Figure()
-                fig_bin.add_trace(go.Scatter(
-                    x=strikes, y=bin_prices,
-                    mode='lines', line=dict(color='#6366f1', width=2.5),
-                    fill='tozeroy', fillcolor='rgba(99, 102, 241, 0.1)'
-                ))
-                fig_bin.update_layout(
-                    title=f"Binary {bin_type.title()} Price vs Strike (τ={bin_tau:.2f})",
-                    xaxis_title="Strike", yaxis_title="Price",
-                    height=350, template='plotly_dark',
-                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(15, 23, 42, 0.8)',
-                    font=dict(family='DM Sans'),
-                    margin=dict(t=40, b=40),
-                )
-                st.plotly_chart(fig_bin, use_container_width=True)
-            except Exception as e:
-                st.error(f"Binary pricing error: {e}")
-
-    with col_var:
-        st.markdown("#### 📐 Variance Swaps")
-        st.markdown("Fair variance and volatility strike for variance swaps.")
-
-        vs_tau = st.number_input("Swap Maturity (yrs)", value=1.0, min_value=0.01, step=0.1, key='vs_tau')
-
-        if st.button("Compute Var Swap", type="primary", key='price_vs'):
-            try:
-                fair_var = variance_swap_strike(ex_model, S0, r, q, vs_tau, ex_params)
-                vol_strike = variance_swap_vol_strike(ex_model, S0, r, q, vs_tau, ex_params)
-
-                c1, c2 = st.columns(2)
-                c1.metric("Fair Variance", f"{fair_var:.6f}")
-                c2.metric("Vol Strike", f"{vol_strike * 100:.2f}%")
-
-                # Term structure
-                st.markdown("**Variance swap term structure:**")
-                taus = np.linspace(0.05, 5.0, 50)
-                vol_strikes = [variance_swap_vol_strike(ex_model, S0, r, q, t, ex_params) * 100 for t in taus]
-                fair_vars = [variance_swap_strike(ex_model, S0, r, q, t, ex_params) * 100 for t in taus]
-
-                fig_vs = go.Figure()
-                fig_vs.add_trace(go.Scatter(
-                    x=taus, y=vol_strikes,
-                    mode='lines', name='Vol Strike (%)',
-                    line=dict(color='#10b981', width=2.5)
-                ))
-                fig_vs.update_layout(
-                    title="Variance Swap Vol Strike Term Structure",
-                    xaxis_title="Maturity (years)", yaxis_title="Vol Strike (%)",
-                    height=350, template='plotly_dark',
-                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(15, 23, 42, 0.8)',
-                    font=dict(family='DM Sans'),
-                    margin=dict(t=40, b=40),
-                )
-                st.plotly_chart(fig_vs, use_container_width=True)
-            except Exception as e:
-                st.error(f"Var swap error: {e}")
-
-
-# =============================================================================
-# TAB 4: VOL SURFACE VISUALIZATION
-# =============================================================================
-
-with tab_surface:
-    st.markdown("### Model-Implied Volatility Surface")
-
-    if 'calib_result' in st.session_state:
-        surf_params = st.session_state['calib_result']['params']
-        surf_model = st.session_state['calib_model']
-    else:
-        surf_params = DEFAULT_PARAMS[model_choice]
-        surf_model = model_choice
-
-    col_s1, col_s2, col_s3 = st.columns(3)
-    k_min = col_s1.number_input("Min Strike", value=S0 * 0.7, key='surf_kmin')
-    k_max = col_s2.number_input("Max Strike", value=S0 * 1.3, key='surf_kmax')
-    n_strikes = col_s3.slider("# Strikes", 10, 50, 25, key='surf_nk')
-
-    col_s4, col_s5 = st.columns(2)
-    tau_min = col_s4.number_input("Min Maturity", value=0.05, key='surf_tmin')
-    tau_max = col_s5.number_input("Max Maturity", value=2.0, key='surf_tmax')
-    n_taus = 15
-
-    if st.button("🌊 Generate Surface", type="primary", key='gen_surface'):
-        with st.spinner("Computing implied volatility surface..."):
-            strikes = np.linspace(k_min, k_max, n_strikes)
-            taus = np.linspace(tau_min, tau_max, n_taus)
-
-            iv_surface = np.zeros((n_taus, n_strikes))
-
-            for i, tau in enumerate(taus):
-                prices = price_european(surf_model, S0, strikes, r, q, tau,
-                                        surf_params, option_type='call', method='fft')
-                for j, (k, p) in enumerate(zip(strikes, np.atleast_1d(prices))):
-                    try:
-                        iv_surface[i, j] = implied_vol(p, S0, k, r, q, tau) * 100
-                    except:
-                        iv_surface[i, j] = np.nan
-
-            # 3D surface
-            fig_3d = go.Figure(data=[go.Surface(
-                x=strikes, y=taus, z=iv_surface,
-                colorscale='Viridis',
-                colorbar=dict(title='IV (%)', titlefont=dict(size=12)),
-                opacity=0.9,
-            )])
-
-            fig_3d.update_layout(
-                title=f"Implied Vol Surface — {surf_model.replace('_', ' ').title()}",
-                scene=dict(
-                    xaxis_title='Strike',
-                    yaxis_title='Maturity (yrs)',
-                    zaxis_title='Implied Vol (%)',
-                    bgcolor='rgba(15, 23, 42, 0.9)',
-                    xaxis=dict(gridcolor='rgba(100,100,100,0.3)'),
-                    yaxis=dict(gridcolor='rgba(100,100,100,0.3)'),
-                    zaxis=dict(gridcolor='rgba(100,100,100,0.3)'),
-                ),
-                height=600,
-                template='plotly_dark',
-                paper_bgcolor='rgba(0,0,0,0)',
-                font=dict(family='DM Sans'),
-                margin=dict(t=50, b=20),
-            )
-
-            st.plotly_chart(fig_3d, use_container_width=True)
-
-            # Also show the smile at selected maturities
-            fig_smile = go.Figure()
-            for i, tau in enumerate(taus[::max(1, len(taus) // 5)]):
-                idx = np.argmin(np.abs(taus - tau))
-                fig_smile.add_trace(go.Scatter(
-                    x=strikes / S0, y=iv_surface[idx, :],
-                    mode='lines', name=f'τ = {tau:.2f}',
-                    line=dict(width=2)
-                ))
-
-            fig_smile.update_layout(
-                title="Implied Volatility Smile by Maturity",
-                xaxis_title="Moneyness (K/S₀)",
-                yaxis_title="Implied Vol (%)",
-                height=400,
-                template='plotly_dark',
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(15, 23, 42, 0.8)',
-                font=dict(family='DM Sans'),
-                margin=dict(t=40, b=40),
-            )
-            st.plotly_chart(fig_smile, use_container_width=True)
-
-
-# =============================================================================
-# TAB 5: PARAMETER INFO
-# =============================================================================
-
-with tab_params:
-    st.markdown("### Model Specifications")
-
-    st.markdown("""
-    #### Heston (1993)
-    The Heston model introduces stochastic variance following a CIR process:
-
-    $$dS_t = (r - q) S_t \, dt + \\sqrt{v_t} \, S_t \, dW_t^S$$
-
-    $$dv_t = \\kappa (\\theta - v_t) \, dt + \\xi \\sqrt{v_t} \, dW_t^v$$
-
-    with $\\text{corr}(dW^S, dW^v) = \\rho$.
-
-    **Parameters:** $v_0$ (initial variance), $\\kappa$ (mean reversion speed), $\\theta$ (long-run variance),
-    $\\xi$ (vol of vol), $\\rho$ (correlation).
-
-    **Feller condition:** $2\\kappa\\theta > \\xi^2$ ensures variance stays positive.
-    """)
-
-    st.markdown("""
-    #### Bates (1996)
-    Extends Heston with log-normal jumps in the asset price:
-
-    $$dS_t = (r - q - \\lambda_J \\bar{k}) S_t \, dt + \\sqrt{v_t} \, S_t \, dW_t^S + J_t \, S_t \, dN_t$$
-
-    where $\\ln(1 + J_t) \\sim N(\\mu_J, \\sigma_J^2)$ and $N_t$ is a Poisson process with intensity $\\lambda_J$.
-
-    **Additional parameters:** $\\lambda_J$ (jump intensity), $\\mu_J$ (mean jump size), $\\sigma_J$ (jump vol).
-    """)
-
-    st.markdown("""
-    #### Double Heston (Christoffersen, Heston & Jacobs, 2009)
-    Two independent CIR variance processes, allowing richer term structures:
-
-    $$dv_t^{(i)} = \\kappa_i (\\theta_i - v_t^{(i)}) \, dt + \\xi_i \\sqrt{v_t^{(i)}} \, dW_t^{v,i}, \\quad i = 1, 2$$
-
-    Total instantaneous variance is $v_t = v_t^{(1)} + v_t^{(2)}$.
-
-    **Parameters:** $(v_0^i, \\kappa_i, \\theta_i, \\xi_i, \\rho_i)$ for each factor $i \\in \\{1, 2\\}$.
-    """)
-
-    st.markdown("---")
-    st.markdown("### Implementation Notes")
-
-    st.markdown("""
-    **Characteristic function:** Uses the Albrecher et al. (2007) "little Heston trap" formulation
-    to avoid discontinuities in the complex logarithm.
-
-    **FFT pricing:** Carr-Madan (1999) with Simpson's rule weighting, $N = 4096$ grid points,
-    dampening parameter $\\alpha = 1.5$. Provides prices for a full strike grid in one FFT call.
-
-    **Calibration:** Two-stage approach — differential evolution (global search) followed by
-    L-BFGS-B (local polish). Soft penalty for Feller condition violation.
-
-    **Binary options:** Priced via numerical differentiation of the vanilla call price surface.
-
-    **Variance swaps:** Analytical formulas for all three models (Heston and Double Heston:
-    conditional expectation of integrated variance; Bates: adds jump contribution).
-    """)
-
-    st.markdown("---")
-    st.markdown("### References")
-    st.markdown("""
-    1. Heston, S.L. (1993). *A Closed-Form Solution for Options with Stochastic Volatility.* Review of Financial Studies, 6(2), 327–343.
-    2. Bates, D.S. (1996). *Jumps and Stochastic Volatility.* Review of Financial Studies, 9(1), 69–107.
-    3. Christoffersen, P., Heston, S., & Jacobs, K. (2009). *The Shape and Term Structure of the Index Option Smirk.* Management Science, 55(12), 1914–1932.
-    4. Carr, P. & Madan, D. (1999). *Option Valuation Using the Fast Fourier Transform.* Journal of Computational Finance, 2(4), 61–73.
-    5. Albrecher, H., Mayer, P., Schoutens, W., & Tistaert, J. (2007). *The Little Heston Trap.* Wilmott Magazine.
-    6. Gauthier, P. & Possamaï, D. (2011). *Efficient Simulation of the Double Heston Model.* EJOR.
-    """)
-
-
-# =============================================================================
 # Footer
-# =============================================================================
-
 st.markdown("---")
-st.markdown(
-    "<div style='text-align: center; color: #64748b; font-size: 0.8rem;'>"
-    "Options Market Making Tool — Heston Family Models | "
-    "Carr-Madan FFT Pricing | Differential Evolution Calibration"
-    "</div>",
-    unsafe_allow_html=True
-)
+st.caption("Heston Family — Options Market Making Tool | Carr-Madan FFT | Multi-Model Calibration")
