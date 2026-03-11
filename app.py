@@ -107,7 +107,7 @@ def calibrate_all_models(market_data, S0, r, q, max_iter=100, pop_size=3):
 
 st.markdown("## 📊 Heston Family — Options Market Making")
 
-view = st.radio("", ["🏦 Customer View", "⚙️ Trader View"],
+view = st.radio("", ["⚙️ Trader View", "🏦 Customer View"],
                 horizontal=True, label_visibility="collapsed")
 
 
