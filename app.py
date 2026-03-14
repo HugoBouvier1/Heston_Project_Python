@@ -122,12 +122,12 @@ if view == "🏦 Customer View":
     and click <b>Get Quote</b> to receive a tradeable bid-offer price.
     </div>""", unsafe_allow_html=True)
 
-    # Show spot price (read-only info for the customer)
     S0 = st.session_state.get('S0_stored', 100.0)
     r = st.session_state.get('r_stored', 0.02)
     q = st.session_state.get('q_stored', 0.01)
+    underlying = st.session_state.get('underlying_name', 'NDX')
 
-    st.markdown(f"**Underlying spot price: {S0:,.2f}**")
+    st.markdown(f"**Underlying: {underlying} — Spot price: {S0:,.2f}**")
 
     col_in, col_out = st.columns([1, 1])
 
@@ -244,6 +244,7 @@ if view == "⚙️ Trader View":
         saved_r  = st.session_state.get('r_stored', 0.02)
         saved_q  = st.session_state.get('q_stored', 0.01)
 
+        underlying_name = st.text_input("Underlying Name", value=st.session_state.get('underlying_name', 'NDX'), key='t_underlying')
         S0 = st.number_input("Spot Price (S₀)", value=float(saved_S0), min_value=0.01, step=1.0, format="%.2f", key='t_S0')
         r = st.number_input("Risk-Free Rate (r)", value=float(saved_r), min_value=-0.05, max_value=0.30, step=0.005, format="%.4f", key='t_r')
         q = st.number_input("Dividend Yield (q)", value=float(saved_q), min_value=0.0, max_value=0.20, step=0.005, format="%.4f", key='t_q')
@@ -281,6 +282,7 @@ if view == "⚙️ Trader View":
 
     # Store ALL current values back into session_state immediately after the sidebar
     st.session_state['S0_stored'] = S0
+    st.session_state['underlying_name'] = underlying_name
     st.session_state['r_stored'] = r
     st.session_state['q_stored'] = q
     st.session_state['model_stored'] = model_choice
